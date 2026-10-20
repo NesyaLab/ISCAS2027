@@ -1,0 +1,6 @@
+metric,value
+max_abs_error_statevector_vs_formula,1.3877787807814457e-17
+TV_ideal_sample_vs_formula,0.05712890625
+TV_noisy_sample_vs_formula,0.119873046875
+syndrome_violation_ideal,0.0
+syndrome_violation_noisy,0.114990234375
