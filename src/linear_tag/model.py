@@ -648,20 +648,64 @@ class KeyedLinearTagModel:
             for _ in range(shots)
         ))
 
-    def sample_all_blocks(self, x: int) -> list[Transcript]:
-        """Sample exactly one execution of every keyed block.
+    def sample_all_blocks(
+            self,
+            x: int,
+            seed: Optional[int] = None,
+    ) -> list[Transcript]:
+        """Evaluate all keyed blocks using the classical sampler.
 
-        All blocks receive the same x, use their respective
-        fixed keys, and independently draw their labels.
+        Each block is evaluated independently on the SAME original
+        input x, as required by the paper.
 
-        Returns the complete transcript Z_nu.
+        For every block j:
+            1. Use the corresponding secret matrix B_j.
+            2. Independently sample T_j and I_j.
+            3. Compute Y_j = x XOR T_j.
+            4. Compute R_j = B_j T_j.
+            5. Return Z_j = (I_j, R_j, Y_j).
+
+        Parameters
+        ----------
+        x : int
+            Original computational-basis input, shared by all blocks.
+        seed : int, optional
+            Sampling seed. If specified, sampling is reproducible
+            independently of previous calls to the model.
+
+        Returns
+        -------
+        list[Transcript]
+            Complete transcript Z_nu = (Z_1, ..., Z_nu).
+
+        Notes
+        -----
+        This performs one classical sampling execution per block,
+        using the keys fixed at model initialization.
+
+        It reproduces the paper's ideal multi-block evaluation
+        for the exact XOR construction.
         """
-        self._check_input(x)
+        x = self._check_input(x)
 
-        return [
-            self.classical_sample(x, block=j)
-            for j in range(self.nu)
-        ]
+        rng = (
+            np.random.default_rng(seed)
+            if seed is not None
+            else self._rng
+        )
+
+        records = []
+
+        for j in range(self.nu):
+            # Always use the original input x.
+            record = self.classical_sample(
+                x=x,
+                block=j,
+                rng=rng,
+            )
+            records.append(record)
+
+        return records
 
     # =============================================================
     # 5. QUANTUM EXPERIMENTS
@@ -708,6 +752,66 @@ class KeyedLinearTagModel:
             for bitstring, count in result.get_counts().items()
         }
 
+    def quantum_sample_all_blocks(
+            self,
+            x: int,
+            seed: Optional[int] = None,
+    ) -> list[Transcript]:
+        """Execute every keyed quantum block exactly once.
+
+        Each block uses:
+            - The same original computational-basis input x.
+            - Its own independently generated secret matrix B_j.
+            - Freshly initialized quantum registers.
+            - One ideal Qiskit Aer measurement shot.
+
+        The measured system output of block j is NOT used to
+        initialize block j+1.
+
+        Parameters
+        ----------
+        x : int
+            Original input, freshly prepared for every block.
+        seed : int, optional
+            Seed for reproducible simulator sampling.
+
+        Returns
+        -------
+        list[Transcript]
+            Complete measured transcript Z_nu.
+
+        Notes
+        -----
+        This matches the one-execution-per-block structure
+        of the paper.
+
+        The implementation calls quantum_counts() with shots=1
+        for each block. It is convenient for verification,
+        although repeated simulator initialization introduces
+        computational overhead.
+        """
+        x = self._check_input(x)
+
+        rng = np.random.default_rng(seed)
+        records = []
+
+        for j in range(self.nu):
+            # Use a different simulator seed for each block.
+            block_seed = int(rng.integers(0, 2 ** 31 - 1))
+
+            # IMPORTANT: prepare the original x again.
+            counts = self.quantum_counts(
+                x=x,
+                shots=1,
+                block=j,
+                seed=block_seed,
+            )
+
+            # Exactly one shot gives exactly one observed transcript.
+            record = next(iter(counts))
+            records.append(record)
+
+        return records
     # =============================================================
     # 6. EXACT PROBABILITY DISTRIBUTIONS
     # =============================================================
